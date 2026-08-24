@@ -14,7 +14,7 @@ export type IndicatorKey =
   | "macd"
   | "volume";
 
-export type DrawingTool = "cursor" | "hline" | "measure" | "eraser";
+export type DrawingTool = "cursor" | "hline" | "measure" | "fibonacci" | "channel" | "eraser";
 
 export interface PriceLine {
   id: string;
@@ -140,7 +140,7 @@ export const useChartStore = create<ChartState>()(
         const s = get();
         const wlKey = market === "crypto" ? "watchlistCrypto" : market === "usa" ? "watchlistUsa" : "watchlistBvc";
         const wl = s[wlKey];
-        const defaultSymbol = market === "crypto" ? "BTCUSDT" : market === "usa" ? "AAPL" : "EC";
+        const defaultSymbol = market === "crypto" ? "BTCUSDT" : market === "usa" ? "AAPL" : "ECOPETL.CL";
         set({
           market,
           symbol: wl[0] || defaultSymbol,
