@@ -9,7 +9,7 @@ interface Props {
   color: string;
   hidden: boolean;
   onToggleHide: () => void;
-  onSettings: () => void;
+  onSettings?: () => void;
   onRemove: () => void;
 }
 
@@ -50,14 +50,16 @@ export function IndicatorPill({
             <Eye className="h-3 w-3" />
           )}
         </button>
-        <button
-          onClick={onSettings}
-          title="Configurar"
-          aria-label="Configurar"
-          className="rounded p-0.5 text-tv-text-dim transition-colors hover:bg-tv-panel-hover hover:text-tv-text"
-        >
-          <Settings className="h-3 w-3" />
-        </button>
+        {onSettings && (
+          <button
+            onClick={onSettings}
+            title="Configurar"
+            aria-label="Configurar"
+            className="rounded p-0.5 text-tv-text-dim transition-colors hover:bg-tv-panel-hover hover:text-tv-text"
+          >
+            <Settings className="h-3 w-3" />
+          </button>
+        )}
         <button
           onClick={onRemove}
           title="Eliminar"

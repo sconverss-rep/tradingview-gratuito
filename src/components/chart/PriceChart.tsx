@@ -28,6 +28,7 @@ import { IndicatorPill } from "./IndicatorPill";
 import { MeasureOverlay } from "./MeasureOverlay";
 import { FibonacciOverlay } from "./FibonacciOverlay";
 import { ChannelOverlay } from "./ChannelOverlay";
+import { VolumeProfileOverlay } from "./VolumeProfileOverlay";
 
 interface MeasurePoint {
   time: number;
@@ -155,6 +156,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const [measure, setMeasure] = useState<MeasureState>(INITIAL_MEASURE);
   const [fibo, setFibo] = useState<FiboState>(INITIAL_FIBO);
   const [channel, setChannel] = useState<ChannelState>(INITIAL_CHANNEL);
+  const [visibleCandles, setVisibleCandles] = useState<Candle[]>([]);
+  const [chartDims, setChartDims] = useState({ w: 0, h: 0 });
   const [renderTick, setRenderTick] = useState(0);
   const measureRef = useRef(measure);
   measureRef.current = measure;
@@ -390,11 +393,24 @@ export function PriceChart({ symbol, timeframe }: Props) {
       }
     });
 
-    // Re-render measure overlay on pan / zoom so pixel coords stay in sync
-    const tsRangeHandler = () => setRenderTick((t) => t + 1);
-    chart.timeScale().subscribeVisibleTimeRangeChange(tsRangeHandler);
-    const logicalRangeHandler = () => setRenderTick((t) => t + 1);
-    chart.timeScale().subscribeVisibleLogicalRangeChange(logicalRangeHandler);
+    // Re-render overlays on pan / zoom so pixel coords stay in sync
+    const updateVisibleCandles = () => {
+      setRenderTick((t) => t + 1);
+      if (!chartRef.current) return;
+      const ts = chartRef.current.timeScale();
+      const range = ts.getVisibleRange();
+      if (range) {
+        const from = Number(range.from);
+        const to = Number(range.to);
+        const vc = candlesRef.current.filter((c) => c.time >= from && c.time <= to);
+        setVisibleCandles(vc);
+      }
+      if (containerRef.current) {
+        setChartDims({ w: containerRef.current.clientWidth, h: containerRef.current.clientHeight });
+      }
+    };
+    chart.timeScale().subscribeVisibleTimeRangeChange(updateVisibleCandles);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(updateVisibleCandles);
 
     // ResizeObserver — recompute pane offsets when chart container resizes
     const ro = new ResizeObserver(() => {
@@ -404,8 +420,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
     recomputePaneOffsets();
 
     return () => {
-      chart.timeScale().unsubscribeVisibleTimeRangeChange(tsRangeHandler);
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(logicalRangeHandler);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(updateVisibleCandles);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(updateVisibleCandles);
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -1013,6 +1029,16 @@ export function PriceChart({ symbol, timeframe }: Props) {
       {fiboRender}
       {channelRender}
 
+      {/* Volume Profile Visible Range */}
+      {indicators.vpfr && !hidden.vpfr && visibleCandles.length > 0 && candleSeriesRef.current && (
+        <VolumeProfileOverlay
+          candles={visibleCandles}
+          priceToY={(p) => candleSeriesRef.current?.priceToCoordinate(p) ?? null}
+          chartWidth={chartDims.w}
+          chartHeight={chartDims.h}
+        />
+      )}
+
       {/* Top-left of main pane: symbol info + OHLC + Volume pill + EMA pills */}
       <div
         style={{ top: (paneOffsets[0]?.top ?? 0) + 12, left: 12 }}
@@ -1113,6 +1139,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
               onToggleHide={() => toggleHidden("volume")}
               onSettings={() => setSettingsTarget("volume")}
               onRemove={() => removeIndicator("volume")}
+            />
+          )}
+          {indicators.vpfr && (
+            <IndicatorPill
+              name="Volume Profile"
+              color={INDICATOR_COLORS.vpfr}
+              hidden={hidden.vpfr}
+              onToggleHide={() => toggleHidden("vpfr")}
+              onRemove={() => removeIndicator("vpfr")}
             />
           )}
         </div>
