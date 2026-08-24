@@ -26,6 +26,8 @@ import {
 import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
 import { MeasureOverlay } from "./MeasureOverlay";
+import { FibonacciOverlay } from "./FibonacciOverlay";
+import { ChannelOverlay } from "./ChannelOverlay";
 
 interface MeasurePoint {
   time: number;
@@ -37,6 +39,21 @@ interface MeasureState {
   b: MeasurePoint | null;
 }
 const INITIAL_MEASURE: MeasureState = { phase: "idle", a: null, b: null };
+
+interface FiboState {
+  phase: "idle" | "placing" | "done";
+  a: MeasurePoint | null;
+  b: MeasurePoint | null;
+}
+const INITIAL_FIBO: FiboState = { phase: "idle", a: null, b: null };
+
+interface ChannelState {
+  phase: "idle" | "p1" | "p2" | "p3" | "done";
+  a: MeasurePoint | null;
+  b: MeasurePoint | null;
+  c: MeasurePoint | null;
+}
+const INITIAL_CHANNEL: ChannelState = { phase: "idle", a: null, b: null, c: null };
 
 function durationLabel(aTime: number, bTime: number): string {
   const diff = Math.abs(bTime - aTime);
@@ -136,9 +153,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const [lastValues, setLastValues] = useState<LastValues>({});
   const [paneOffsets, setPaneOffsets] = useState<PaneOffset[]>([]);
   const [measure, setMeasure] = useState<MeasureState>(INITIAL_MEASURE);
+  const [fibo, setFibo] = useState<FiboState>(INITIAL_FIBO);
+  const [channel, setChannel] = useState<ChannelState>(INITIAL_CHANNEL);
   const [renderTick, setRenderTick] = useState(0);
   const measureRef = useRef(measure);
   measureRef.current = measure;
+  const fiboRef = useRef(fibo);
+  fiboRef.current = fibo;
+  const channelRef = useRef(channel);
+  channelRef.current = channel;
 
   // Helper — compute pane top offsets from chart layout
   function recomputePaneOffsets() {
@@ -178,6 +201,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       rightPriceScale: {
         borderColor: TV_COLORS.border,
         textColor: TV_COLORS.textMuted,
+        autoScale: true,
       },
       timeScale: {
         borderColor: TV_COLORS.border,
@@ -257,6 +281,34 @@ export function PriceChart({ symbol, timeframe }: Props) {
           });
         }
       }
+
+      if (toolRef.current === "fibonacci") {
+        if (!param.time) return;
+        const time = Number(param.time);
+        const current = fiboRef.current;
+        if (current.phase === "idle") {
+          setFibo({ phase: "placing", a: { time, price }, b: { time, price } });
+        } else if (current.phase === "placing") {
+          setFibo({ phase: "done", a: current.a, b: { time, price } });
+        } else {
+          setFibo({ phase: "placing", a: { time, price }, b: { time, price } });
+        }
+      }
+
+      if (toolRef.current === "channel") {
+        if (!param.time) return;
+        const time = Number(param.time);
+        const current = channelRef.current;
+        if (current.phase === "idle") {
+          setChannel({ phase: "p1", a: { time, price }, b: { time, price }, c: null });
+        } else if (current.phase === "p1") {
+          setChannel({ phase: "p2", a: current.a, b: { time, price }, c: { time, price } });
+        } else if (current.phase === "p2") {
+          setChannel({ phase: "done", a: current.a, b: current.b, c: { time, price } });
+        } else {
+          setChannel({ phase: "p1", a: { time, price }, b: { time, price }, c: null });
+        }
+      }
     });
 
     // Crosshair handler
@@ -274,6 +326,44 @@ export function PriceChart({ symbol, timeframe }: Props) {
           setMeasure((prev) =>
             prev.phase === "placing" ? { ...prev, b: { time, price } } : prev,
           );
+        }
+      }
+
+      if (
+        toolRef.current === "fibonacci" &&
+        fiboRef.current.phase === "placing" &&
+        param.point &&
+        param.time &&
+        candleSeriesRef.current
+      ) {
+        const priceF = candleSeriesRef.current.coordinateToPrice(param.point.y);
+        if (priceF !== null && isFinite(priceF)) {
+          const timeF = Number(param.time);
+          setFibo((prev) =>
+            prev.phase === "placing" ? { ...prev, b: { time: timeF, price: priceF } } : prev,
+          );
+        }
+      }
+
+      if (
+        toolRef.current === "channel" &&
+        param.point &&
+        param.time &&
+        candleSeriesRef.current
+      ) {
+        const priceC = candleSeriesRef.current.coordinateToPrice(param.point.y);
+        if (priceC !== null && isFinite(priceC)) {
+          const timeC = Number(param.time);
+          const cur = channelRef.current;
+          if (cur.phase === "p1") {
+            setChannel((prev) =>
+              prev.phase === "p1" ? { ...prev, b: { time: timeC, price: priceC } } : prev,
+            );
+          } else if (cur.phase === "p2") {
+            setChannel((prev) =>
+              prev.phase === "p2" ? { ...prev, c: { time: timeC, price: priceC } } : prev,
+            );
+          }
         }
       }
 
@@ -534,9 +624,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.style.cursor =
-        tool === "hline" || tool === "measure" ? "crosshair" : "";
+        tool === "hline" || tool === "measure" || tool === "fibonacci" || tool === "channel"
+          ? "crosshair"
+          : "";
     }
     if (tool !== "measure") setMeasure(INITIAL_MEASURE);
+    if (tool !== "fibonacci") setFibo(INITIAL_FIBO);
+    if (tool !== "channel") setChannel(INITIAL_CHANNEL);
   }, [tool]);
 
   function updateEMAs() {
@@ -658,7 +752,17 @@ export function PriceChart({ symbol, timeframe }: Props) {
       updateEMAs();
       updateRSI();
       updateMACD();
-      chartRef.current?.timeScale().fitContent();
+      // Auto-fit: show a reasonable window of bars centered on the latest price
+      if (chartRef.current) {
+        const ts = chartRef.current.timeScale();
+        const totalBars = klines.length;
+        // Show last ~150 bars (or all if fewer), with some right margin
+        const barsToShow = Math.min(totalBars, 150);
+        ts.setVisibleLogicalRange({
+          from: totalBars - barsToShow,
+          to: totalBars + 10,
+        });
+      }
       requestAnimationFrame(() => recomputePaneOffsets());
 
       if (klines.length > 0) {
@@ -834,12 +938,80 @@ export function PriceChart({ symbol, timeframe }: Props) {
       );
     }
   }
+  // Fibonacci overlay
+  let fiboRender: React.ReactNode = null;
+  if (
+    fibo.a &&
+    fibo.b &&
+    chartRef.current &&
+    candleSeriesRef.current
+  ) {
+    const ts = chartRef.current.timeScale();
+    const faX = ts.timeToCoordinate(fibo.a.time as UTCTimestamp);
+    const fbX = ts.timeToCoordinate(fibo.b.time as UTCTimestamp);
+    const faY = candleSeriesRef.current.priceToCoordinate(fibo.a.price);
+    const fbY = candleSeriesRef.current.priceToCoordinate(fibo.b.price);
+
+    if (faX !== null && fbX !== null && faY !== null && fbY !== null) {
+      const highPrice = Math.max(fibo.a.price, fibo.b.price);
+      const lowPrice = Math.min(fibo.a.price, fibo.b.price);
+      fiboRender = (
+        <FibonacciOverlay
+          aX={faX}
+          aY={faY}
+          bX={fbX}
+          bY={fbY}
+          highPrice={highPrice}
+          lowPrice={lowPrice}
+          isPreview={fibo.phase === "placing"}
+        />
+      );
+    }
+  }
+
+  // Channel overlay
+  let channelRender: React.ReactNode = null;
+  if (
+    channel.a &&
+    channel.b &&
+    chartRef.current &&
+    candleSeriesRef.current
+  ) {
+    const ts = chartRef.current.timeScale();
+    const caX = ts.timeToCoordinate(channel.a.time as UTCTimestamp);
+    const cbX = ts.timeToCoordinate(channel.b.time as UTCTimestamp);
+    const caY = candleSeriesRef.current.priceToCoordinate(channel.a.price);
+    const cbY = candleSeriesRef.current.priceToCoordinate(channel.b.price);
+
+    if (caX !== null && cbX !== null && caY !== null && cbY !== null) {
+      let ccX: number | null = null;
+      let ccY: number | null = null;
+      if (channel.c) {
+        ccX = ts.timeToCoordinate(channel.c.time as UTCTimestamp);
+        ccY = candleSeriesRef.current.priceToCoordinate(channel.c.price);
+      }
+      channelRender = (
+        <ChannelOverlay
+          aX={caX}
+          aY={caY}
+          bX={cbX}
+          bY={cbY}
+          cX={ccX}
+          cY={ccY}
+          isPreview={channel.phase !== "done"}
+        />
+      );
+    }
+  }
+
   void renderTick;
 
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       {measureRender}
+      {fiboRender}
+      {channelRender}
 
       {/* Top-left of main pane: symbol info + OHLC + Volume pill + EMA pills */}
       <div
