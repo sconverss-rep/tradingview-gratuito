@@ -1,0 +1,127 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* TradingView signature colors */
+  --color-tv-bg: #131722;
+  --color-tv-panel: #1e222d;
+  --color-tv-panel-hover: #2a2e39;
+  --color-tv-border: #2a2e39;
+  --color-tv-text: #d1d4dc;
+  --color-tv-text-muted: #787b86;
+  --color-tv-text-dim: #50535e;
+  --color-tv-green: #26a69a;
+  --color-tv-red: #ef5350;
+  --color-tv-blue: #2962ff;
+  --color-tv-yellow: #ffb74d;
+  --color-tv-purple: #ab47bc;
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+}
+
+:root {
+  /* Force TradingView dark theme as the only theme */
+  --background: #131722;
+  --foreground: #d1d4dc;
+  --card: #1e222d;
+  --card-foreground: #d1d4dc;
+  --popover: #1e222d;
+  --popover-foreground: #d1d4dc;
+  --primary: #2962ff;
+  --primary-foreground: #ffffff;
+  --secondary: #2a2e39;
+  --secondary-foreground: #d1d4dc;
+  --muted: #1e222d;
+  --muted-foreground: #787b86;
+  --accent: #2a2e39;
+  --accent-foreground: #d1d4dc;
+  --destructive: #ef5350;
+  --border: #2a2e39;
+  --input: #2a2e39;
+  --ring: #2962ff;
+  --radius: 0.375rem;
+}
+
+.dark {
+  --background: #131722;
+  --foreground: #d1d4dc;
+  --card: #1e222d;
+  --card-foreground: #d1d4dc;
+  --popover: #1e222d;
+  --popover-foreground: #d1d4dc;
+  --primary: #2962ff;
+  --primary-foreground: #ffffff;
+  --secondary: #2a2e39;
+  --secondary-foreground: #d1d4dc;
+  --muted: #1e222d;
+  --muted-foreground: #787b86;
+  --accent: #2a2e39;
+  --accent-foreground: #d1d4dc;
+  --destructive: #ef5350;
+  --border: #2a2e39;
+  --input: #2a2e39;
+  --ring: #2962ff;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  html {
+    @apply font-sans;
+  }
+
+  /* Custom scrollbar — thin, TV-like */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #131722;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2a2e39;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #363a45;
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
