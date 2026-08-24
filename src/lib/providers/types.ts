@@ -46,12 +46,12 @@ export const DEFAULT_USA_WATCHLIST = [
 ];
 
 export const DEFAULT_BVC_WATCHLIST = [
-  "EC",       // Ecopetrol (ADR NYSE)
-  "CIB",      // Bancolombia (ADR NYSE)
-  "AVAL",     // Grupo Aval (ADR NYSE)
-  "PFBCOLOM.CL", // Bancolombia pref (BVC via Yahoo)
-  "ECOPETL.CL",  // Ecopetrol (BVC via Yahoo)
-  "ISA.CL",      // ISA (BVC via Yahoo)
-  "NUTRESA.CL",  // Nutresa (BVC via Yahoo)
-  "GRUPOARG.CL", // Grupo Argos (BVC via Yahoo)
+  "ECOPETL.CL",  // Ecopetrol
+  "PFBCOLOM.CL", // Bancolombia preferencial
+  "ISA.CL",      // ISA
+  "GRUPOARG.CL", // Grupo Argos
+  "NUTRESA.CL",  // Nutresa
+  "GRUPOSUR.CL", // Grupo SURA
+  "CELSIA.CL",   // Celsia
+  "BOGOTA.CL",   // Banco de Bogotá
 ];
