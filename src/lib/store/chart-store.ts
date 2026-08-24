@@ -12,7 +12,8 @@ export type IndicatorKey =
   | "ema200"
   | "rsi"
   | "macd"
-  | "volume";
+  | "volume"
+  | "vpfr";
 
 export type DrawingTool = "cursor" | "hline" | "measure" | "fibonacci" | "channel" | "eraser";
 
@@ -49,6 +50,7 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   rsi: "#ab47bc",
   macd: "#2962ff",
   volume: "#787b86",
+  vpfr: "#2196f3",
 };
 
 export const DEFAULT_WATCHLIST = [
@@ -117,6 +119,7 @@ export const useChartStore = create<ChartState>()(
         rsi: true,
         macd: false,
         volume: true,
+        vpfr: false,
       },
       hidden: {
         ema20: false,
@@ -125,6 +128,7 @@ export const useChartStore = create<ChartState>()(
         rsi: false,
         macd: false,
         volume: false,
+        vpfr: false,
       },
       config: { ...DEFAULT_CONFIG },
       watchlist: DEFAULT_WATCHLIST,
