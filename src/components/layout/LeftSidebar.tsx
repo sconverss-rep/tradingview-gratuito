@@ -1,6 +1,6 @@
 "use client";
 
-import { MousePointer2, Minus, Ruler, Trash2, Lock } from "lucide-react";
+import { MousePointer2, Minus, Ruler, Trash2, TrendingUp, GitBranch } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useChartStore, type DrawingTool } from "@/lib/store/chart-store";
 import { cn } from "@/lib/utils";
@@ -26,12 +26,18 @@ const TOOLS: ToolDef[] = [
     label: "Regla / Medir",
     hint: "Click en dos puntos para medir Δ precio, %, barras y volumen",
   },
-];
-
-const LOCKED = [
-  { label: "Línea de tendencia" },
-  { label: "Fibonacci" },
-  { label: "Texto" },
+  {
+    key: "fibonacci",
+    icon: TrendingUp,
+    label: "Retroceso Fibonacci",
+    hint: "Click en dos puntos (alto y bajo) para dibujar niveles",
+  },
+  {
+    key: "channel",
+    icon: GitBranch,
+    label: "Canal paralelo",
+    hint: "Click en 3 puntos: 2 para la línea base + 1 para el ancho",
+  },
 ];
 
 export function LeftSidebar() {
@@ -85,25 +91,6 @@ export function LeftSidebar() {
         </TooltipContent>
       </Tooltip>
 
-      <div className="my-1 h-px w-6 bg-tv-border" />
-
-      {LOCKED.map((t) => (
-        <Tooltip key={t.label}>
-          <TooltipTrigger
-            disabled
-            aria-label={t.label}
-            className="flex h-8 w-8 cursor-not-allowed items-center justify-center rounded text-tv-text-dim opacity-40"
-          >
-            <Lock className="h-3.5 w-3.5" />
-          </TooltipTrigger>
-          <TooltipContent side="right" className="text-xs">
-            <div className="font-medium">{t.label}</div>
-            <div className="mt-0.5 text-[10px] text-tv-yellow">
-              Próximamente · video 3
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      ))}
     </aside>
   );
 }
