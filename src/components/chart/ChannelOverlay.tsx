@@ -119,11 +119,11 @@ export function ChannelOverlay({
         />
       )}
 
-      {/* Point markers */}
-      <circle cx={aX} cy={aY} r={3} fill={CHANNEL_COLOR} opacity={opacity} />
-      <circle cx={bX} cy={bY} r={3} fill={CHANNEL_COLOR} opacity={opacity} />
+      {/* Point markers (hollow ring style, matching TradingView anchor handles) */}
+      <circle cx={aX} cy={aY} r={4} fill="#131722" stroke={CHANNEL_COLOR} strokeWidth={1.5} opacity={opacity} />
+      <circle cx={bX} cy={bY} r={4} fill="#131722" stroke={CHANNEL_COLOR} strokeWidth={1.5} opacity={opacity} />
       {hasThirdPoint && cX !== null && cY !== null && (
-        <circle cx={cX} cy={cY} r={3} fill={CHANNEL_COLOR} opacity={opacity} />
+        <circle cx={cX} cy={cY} r={4} fill="#131722" stroke={CHANNEL_COLOR} strokeWidth={1.5} opacity={opacity} />
       )}
     </svg>
   );

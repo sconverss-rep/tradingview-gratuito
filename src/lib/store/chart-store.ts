@@ -15,12 +15,52 @@ export type IndicatorKey =
   | "volume"
   | "vpfr";
 
-export type DrawingTool = "cursor" | "hline" | "measure" | "fibonacci" | "channel" | "eraser";
+export type DrawingTool =
+  | "cursor"
+  | "hline"
+  | "trendline"
+  | "measure"
+  | "fibonacci"
+  | "channel"
+  | "eraser";
 
 export interface PriceLine {
   id: string;
   symbol: string;
   price: number;
+}
+
+export interface DrawingPoint {
+  time: number;
+  price: number;
+}
+
+export interface TrendLineDrawing {
+  id: string;
+  symbol: string;
+  a: DrawingPoint;
+  b: DrawingPoint;
+}
+
+export interface FibonacciDrawing {
+  id: string;
+  symbol: string;
+  a: DrawingPoint;
+  b: DrawingPoint;
+}
+
+export interface ChannelDrawing {
+  id: string;
+  symbol: string;
+  a: DrawingPoint;
+  b: DrawingPoint;
+  c: DrawingPoint;
+}
+
+function genId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
 }
 
 export interface IndicatorConfig {
@@ -82,9 +122,13 @@ interface ChartState {
   watchlistUsa: string[];
   watchlistBvc: string[];
 
-  // Ephemeral UI state (not persisted)
+  // Ephemeral UI state
   tool: DrawingTool;
+  // Drawings below are persisted (see partialize) so they survive reloads
   priceLines: PriceLine[];
+  trendLines: TrendLineDrawing[];
+  fibonacciDrawings: FibonacciDrawing[];
+  channelDrawings: ChannelDrawing[];
   symbolDialogOpen: boolean;
   /** Which indicator's settings dialog is open (null = closed) */
   settingsTarget: IndicatorKey | null;
@@ -101,7 +145,11 @@ interface ChartState {
   removeFromWatchlist: (s: string) => void;
   setTool: (t: DrawingTool) => void;
   addPriceLine: (price: number, symbol: string) => void;
+  addTrendLine: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
+  addFibonacci: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
+  addChannel: (a: DrawingPoint, b: DrawingPoint, c: DrawingPoint, symbol: string) => void;
   clearPriceLines: (symbol?: string) => void;
+  clearDrawings: (symbol?: string) => void;
   setSymbolDialogOpen: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null) => void;
 }
@@ -137,6 +185,9 @@ export const useChartStore = create<ChartState>()(
       watchlistBvc: DEFAULT_BVC_WATCHLIST,
       tool: "cursor",
       priceLines: [],
+      trendLines: [],
+      fibonacciDrawings: [],
+      channelDrawings: [],
       symbolDialogOpen: false,
       settingsTarget: null,
 
@@ -191,22 +242,45 @@ export const useChartStore = create<ChartState>()(
       setTool: (tool) => set({ tool }),
       addPriceLine: (price, symbol) =>
         set((state) => ({
-          priceLines: [
-            ...state.priceLines,
-            {
-              id:
-                typeof crypto !== "undefined" && "randomUUID" in crypto
-                  ? crypto.randomUUID()
-                  : `${Date.now()}-${Math.random()}`,
-              symbol,
-              price,
-            },
+          priceLines: [...state.priceLines, { id: genId(), symbol, price }],
+        })),
+      addTrendLine: (a, b, symbol) =>
+        set((state) => ({
+          trendLines: [...state.trendLines, { id: genId(), symbol, a, b }],
+        })),
+      addFibonacci: (a, b, symbol) =>
+        set((state) => ({
+          fibonacciDrawings: [
+            ...state.fibonacciDrawings,
+            { id: genId(), symbol, a, b },
+          ],
+        })),
+      addChannel: (a, b, c, symbol) =>
+        set((state) => ({
+          channelDrawings: [
+            ...state.channelDrawings,
+            { id: genId(), symbol, a, b, c },
           ],
         })),
       clearPriceLines: (symbol) =>
         set((state) => ({
           priceLines: symbol
             ? state.priceLines.filter((p) => p.symbol !== symbol)
+            : [],
+        })),
+      clearDrawings: (symbol) =>
+        set((state) => ({
+          priceLines: symbol
+            ? state.priceLines.filter((p) => p.symbol !== symbol)
+            : [],
+          trendLines: symbol
+            ? state.trendLines.filter((p) => p.symbol !== symbol)
+            : [],
+          fibonacciDrawings: symbol
+            ? state.fibonacciDrawings.filter((p) => p.symbol !== symbol)
+            : [],
+          channelDrawings: symbol
+            ? state.channelDrawings.filter((p) => p.symbol !== symbol)
             : [],
         })),
       setSymbolDialogOpen: (symbolDialogOpen) => set({ symbolDialogOpen }),
@@ -225,6 +299,10 @@ export const useChartStore = create<ChartState>()(
         watchlistCrypto: s.watchlistCrypto,
         watchlistUsa: s.watchlistUsa,
         watchlistBvc: s.watchlistBvc,
+        priceLines: s.priceLines,
+        trendLines: s.trendLines,
+        fibonacciDrawings: s.fibonacciDrawings,
+        channelDrawings: s.channelDrawings,
       }),
     },
   ),
