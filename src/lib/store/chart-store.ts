@@ -19,6 +19,7 @@ export type DrawingTool =
   | "cursor"
   | "hline"
   | "trendline"
+  | "rectangle"
   | "measure"
   | "fibonacci"
   | "channel"
@@ -55,6 +56,13 @@ export interface ChannelDrawing {
   a: DrawingPoint;
   b: DrawingPoint;
   c: DrawingPoint;
+}
+
+export interface RectangleDrawing {
+  id: string;
+  symbol: string;
+  a: DrawingPoint;
+  b: DrawingPoint;
 }
 
 function genId(): string {
@@ -129,6 +137,7 @@ interface ChartState {
   trendLines: TrendLineDrawing[];
   fibonacciDrawings: FibonacciDrawing[];
   channelDrawings: ChannelDrawing[];
+  rectangles: RectangleDrawing[];
   symbolDialogOpen: boolean;
   /** Which indicator's settings dialog is open (null = closed) */
   settingsTarget: IndicatorKey | null;
@@ -148,6 +157,12 @@ interface ChartState {
   addTrendLine: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
   addFibonacci: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
   addChannel: (a: DrawingPoint, b: DrawingPoint, c: DrawingPoint, symbol: string) => void;
+  addRectangle: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
+  removePriceLine: (id: string) => void;
+  removeTrendLine: (id: string) => void;
+  removeFibonacci: (id: string) => void;
+  removeChannel: (id: string) => void;
+  removeRectangle: (id: string) => void;
   clearPriceLines: (symbol?: string) => void;
   clearDrawings: (symbol?: string) => void;
   setSymbolDialogOpen: (v: boolean) => void;
@@ -188,6 +203,7 @@ export const useChartStore = create<ChartState>()(
       trendLines: [],
       fibonacciDrawings: [],
       channelDrawings: [],
+      rectangles: [],
       symbolDialogOpen: false,
       settingsTarget: null,
 
@@ -262,6 +278,30 @@ export const useChartStore = create<ChartState>()(
             { id: genId(), symbol, a, b, c },
           ],
         })),
+      addRectangle: (a, b, symbol) =>
+        set((state) => ({
+          rectangles: [...state.rectangles, { id: genId(), symbol, a, b }],
+        })),
+      removePriceLine: (id) =>
+        set((state) => ({
+          priceLines: state.priceLines.filter((p) => p.id !== id),
+        })),
+      removeTrendLine: (id) =>
+        set((state) => ({
+          trendLines: state.trendLines.filter((p) => p.id !== id),
+        })),
+      removeFibonacci: (id) =>
+        set((state) => ({
+          fibonacciDrawings: state.fibonacciDrawings.filter((p) => p.id !== id),
+        })),
+      removeChannel: (id) =>
+        set((state) => ({
+          channelDrawings: state.channelDrawings.filter((p) => p.id !== id),
+        })),
+      removeRectangle: (id) =>
+        set((state) => ({
+          rectangles: state.rectangles.filter((p) => p.id !== id),
+        })),
       clearPriceLines: (symbol) =>
         set((state) => ({
           priceLines: symbol
@@ -281,6 +321,9 @@ export const useChartStore = create<ChartState>()(
             : [],
           channelDrawings: symbol
             ? state.channelDrawings.filter((p) => p.symbol !== symbol)
+            : [],
+          rectangles: symbol
+            ? state.rectangles.filter((p) => p.symbol !== symbol)
             : [],
         })),
       setSymbolDialogOpen: (symbolDialogOpen) => set({ symbolDialogOpen }),
@@ -303,6 +346,7 @@ export const useChartStore = create<ChartState>()(
         trendLines: s.trendLines,
         fibonacciDrawings: s.fibonacciDrawings,
         channelDrawings: s.channelDrawings,
+        rectangles: s.rectangles,
       }),
     },
   ),
