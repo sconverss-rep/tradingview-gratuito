@@ -1,130 +1,98 @@
 "use client";
 
+export type ChannelAnchor = "a" | "b" | "a2" | "b2" | "mt" | "mb";
+
 interface ChannelOverlayProps {
   aX: number;
   aY: number;
   bX: number;
   bY: number;
-  cX: number | null;
-  cY: number | null;
+  /** Vertical offset (px) of the parallel line; null while the width isn't set yet */
+  dY: number | null;
   isPreview: boolean;
+  selected: boolean;
+  onAnchorPointerDown?: (anchor: ChannelAnchor, e: React.PointerEvent) => void;
 }
 
-const CHANNEL_COLOR = "#2196f3";
-const CHANNEL_FILL = "rgba(33, 150, 243, 0.08)";
+const CHANNEL_COLOR = "#2962ff";
+const CHANNEL_FILL = "rgba(41, 98, 255, 0.15)";
 
 export function ChannelOverlay({
   aX,
   aY,
   bX,
   bY,
-  cX,
-  cY,
+  dY,
   isPreview,
+  selected,
+  onAnchorPointerDown,
 }: ChannelOverlayProps) {
-  const opacity = isPreview ? 0.5 : 0.8;
+  const opacity = isPreview ? 0.7 : 1;
+  const dash = isPreview ? "6 3" : "none";
+  const hasWidth = dY !== null;
+  const d = dY ?? 0;
+  const mX = (aX + bX) / 2;
+  const mY = (aY + bY) / 2;
 
-  // Base line: A → B
-  // If C is set, the parallel line is offset by the perpendicular distance from C to AB
-  const hasThirdPoint = cX !== null && cY !== null;
-
-  // Compute the offset for the parallel line
-  let dX = 0;
-  let dY = 0;
-  if (hasThirdPoint && cX !== null && cY !== null) {
-    // The offset is simply the perpendicular projection of C onto the AB direction
-    // For a parallel channel, we shift AB by the vector from the AB line to C
-    const abX = bX - aX;
-    const abY = bY - aY;
-    const abLen = Math.sqrt(abX * abX + abY * abY);
-
-    if (abLen > 0) {
-      // Normal vector (perpendicular to AB)
-      const nX = -abY / abLen;
-      const nY = abX / abLen;
-
-      // Vector from A to C
-      const acX = cX - aX;
-      const acY = cY - aY;
-
-      // Project AC onto the normal to get the perpendicular distance
-      const dist = acX * nX + acY * nY;
-
-      dX = nX * dist;
-      dY = nY * dist;
-    }
+  const anchors: { key: ChannelAnchor; x: number; y: number }[] = [
+    { key: "a", x: aX, y: aY },
+    { key: "b", x: bX, y: bY },
+  ];
+  if (hasWidth) {
+    anchors.push(
+      { key: "a2", x: aX, y: aY + d },
+      { key: "b2", x: bX, y: bY + d },
+      { key: "mt", x: mX, y: mY },
+      { key: "mb", x: mX, y: mY + d },
+    );
   }
-
-  // Extended line points (extend beyond A and B for visual effect)
-  const extendFactor = 0.3;
-  const dirX = bX - aX;
-  const dirY = bY - aY;
-
-  const eaX = aX - dirX * extendFactor;
-  const eaY = aY - dirY * extendFactor;
-  const ebX = bX + dirX * extendFactor;
-  const ebY = bY + dirY * extendFactor;
 
   return (
     <svg
       className="pointer-events-none absolute inset-0 z-20"
       style={{ overflow: "visible" }}
     >
-      {/* Fill between lines */}
-      {hasThirdPoint && (
+      {hasWidth && (
         <polygon
-          points={`${eaX},${eaY} ${ebX},${ebY} ${ebX + dX},${ebY + dY} ${eaX + dX},${eaY + dY}`}
+          points={`${aX},${aY} ${bX},${bY} ${bX},${bY + d} ${aX},${aY + d}`}
           fill={CHANNEL_FILL}
           opacity={opacity}
         />
       )}
 
-      {/* Base line A→B */}
-      <line
-        x1={eaX}
-        y1={eaY}
-        x2={ebX}
-        y2={ebY}
-        stroke={CHANNEL_COLOR}
-        strokeWidth={1.5}
-        opacity={opacity}
-        strokeDasharray={isPreview ? "6 3" : "none"}
-      />
+      <line x1={aX} y1={aY} x2={bX} y2={bY} stroke={CHANNEL_COLOR} strokeWidth={2} strokeDasharray={dash} opacity={opacity} />
 
-      {/* Parallel line (offset by perpendicular distance to C) */}
-      {hasThirdPoint && (
-        <line
-          x1={eaX + dX}
-          y1={eaY + dY}
-          x2={ebX + dX}
-          y2={ebY + dY}
-          stroke={CHANNEL_COLOR}
-          strokeWidth={1.5}
-          opacity={opacity}
-          strokeDasharray={isPreview ? "6 3" : "none"}
-        />
+      {hasWidth && (
+        <>
+          <line x1={aX} y1={aY + d} x2={bX} y2={bY + d} stroke={CHANNEL_COLOR} strokeWidth={2} strokeDasharray={dash} opacity={opacity} />
+          <line
+            x1={aX}
+            y1={aY + d / 2}
+            x2={bX}
+            y2={bY + d / 2}
+            stroke={CHANNEL_COLOR}
+            strokeWidth={1}
+            strokeDasharray="4 4"
+            opacity={opacity * 0.6}
+          />
+        </>
       )}
 
-      {/* Center / median line */}
-      {hasThirdPoint && (
-        <line
-          x1={eaX + dX / 2}
-          y1={eaY + dY / 2}
-          x2={ebX + dX / 2}
-          y2={ebY + dY / 2}
-          stroke={CHANNEL_COLOR}
-          strokeWidth={1}
-          strokeDasharray="4 4"
-          opacity={opacity * 0.5}
-        />
-      )}
-
-      {/* Point markers (hollow ring style, matching TradingView anchor handles) */}
-      <circle cx={aX} cy={aY} r={4} fill="#131722" stroke={CHANNEL_COLOR} strokeWidth={1.5} opacity={opacity} />
-      <circle cx={bX} cy={bY} r={4} fill="#131722" stroke={CHANNEL_COLOR} strokeWidth={1.5} opacity={opacity} />
-      {hasThirdPoint && cX !== null && cY !== null && (
-        <circle cx={cX} cy={cY} r={4} fill="#131722" stroke={CHANNEL_COLOR} strokeWidth={1.5} opacity={opacity} />
-      )}
+      {(selected || isPreview) &&
+        anchors.map((p) => (
+          <circle
+            key={p.key}
+            cx={p.x}
+            cy={p.y}
+            r={5}
+            fill="#ffffff"
+            stroke={CHANNEL_COLOR}
+            strokeWidth={2}
+            opacity={opacity}
+            style={{ pointerEvents: onAnchorPointerDown && !isPreview ? "all" : "none", cursor: "grab" }}
+            onPointerDown={(e) => onAnchorPointerDown?.(p.key, e)}
+          />
+        ))}
     </svg>
   );
 }

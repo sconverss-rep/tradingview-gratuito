@@ -11,6 +11,7 @@ import {
   type ISeriesApi,
   type IPriceLine,
   type UTCTimestamp,
+  type Logical,
 } from "lightweight-charts";
 import { fetchKlines } from "@/lib/binance/rest";
 import { getBinanceWS } from "@/lib/binance/ws";
@@ -26,10 +27,11 @@ import {
 import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
 import { MeasureOverlay } from "./MeasureOverlay";
-import { FibonacciOverlay } from "./FibonacciOverlay";
-import { ChannelOverlay } from "./ChannelOverlay";
+import { FibonacciOverlay, FIBO_LEVELS } from "./FibonacciOverlay";
+import { ChannelOverlay, type ChannelAnchor } from "./ChannelOverlay";
 import { TrendLineOverlay } from "./TrendLineOverlay";
 import { RectangleOverlay } from "./RectangleOverlay";
+import { ShapeAnchors, type ShapeAnchor } from "./ShapeAnchors";
 import { VolumeProfileOverlay } from "./VolumeProfileOverlay";
 
 interface MeasurePoint {
@@ -65,6 +67,12 @@ interface TrendLineState {
 }
 const INITIAL_TRENDLINE: TrendLineState = { phase: "idle", a: null, b: null };
 
+type DrawingKind = "hline" | "trendline" | "fibonacci" | "channel" | "rectangle";
+interface SelectedDrawing {
+  kind: DrawingKind;
+  id: string;
+}
+
 interface RectangleState {
   phase: "idle" | "placing";
   a: MeasurePoint | null;
@@ -81,6 +89,113 @@ function distToSegment(px: number, py: number, x1: number, y1: number, x2: numbe
   const cx = x1 + t * dx;
   const cy = y1 + t * dy;
   return Math.hypot(px - cx, py - cy);
+}
+
+type TimeScaleApi = ReturnType<IChartApi["timeScale"]>;
+
+// Time <-> logical index conversion that extrapolates beyond the first/last bar,
+// so drawings can live in the empty space to the right of the latest candle.
+function timeToLogical(candles: Candle[], time: number): number | null {
+  const n = candles.length;
+  if (n < 2) return null;
+  if (time >= candles[n - 1].time) {
+    const step = candles[n - 1].time - candles[n - 2].time;
+    return n - 1 + (time - candles[n - 1].time) / step;
+  }
+  if (time <= candles[0].time) {
+    return (time - candles[0].time) / (candles[1].time - candles[0].time);
+  }
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (candles[mid].time <= time) lo = mid;
+    else hi = mid;
+  }
+  return lo + (time - candles[lo].time) / (candles[lo + 1].time - candles[lo].time);
+}
+
+function logicalToTime(candles: Candle[], l: number): number | null {
+  const n = candles.length;
+  if (n < 2) return null;
+  if (l >= n - 1) return candles[n - 1].time + (l - (n - 1)) * (candles[n - 1].time - candles[n - 2].time);
+  if (l <= 0) return candles[0].time + l * (candles[1].time - candles[0].time);
+  const i = Math.floor(l);
+  return candles[i].time + (l - i) * (candles[i + 1].time - candles[i].time);
+}
+
+function timeToX(ts: TimeScaleApi, candles: Candle[], time: number): number | null {
+  const l = timeToLogical(candles, time);
+  return l === null ? null : ts.logicalToCoordinate(l as Logical);
+}
+
+function xToTime(ts: TimeScaleApi, candles: Candle[], x: number): number | null {
+  const l = ts.coordinateToLogical(x);
+  return l === null ? null : logicalToTime(candles, l);
+}
+
+interface ChannelPx {
+  aX: number;
+  aY: number;
+  bX: number;
+  bY: number;
+  /** vertical offset (px) of the parallel line */
+  dY: number;
+}
+
+function channelPx(
+  ts: TimeScaleApi,
+  cs: ISeriesApi<"Candlestick">,
+  candles: Candle[],
+  a: MeasurePoint,
+  b: MeasurePoint,
+  c: MeasurePoint,
+): ChannelPx | null {
+  const aX = timeToX(ts, candles, a.time);
+  const bX = timeToX(ts, candles, b.time);
+  const cX = timeToX(ts, candles, c.time);
+  const aY = cs.priceToCoordinate(a.price);
+  const bY = cs.priceToCoordinate(b.price);
+  const cY = cs.priceToCoordinate(c.price);
+  if (aX === null || bX === null || cX === null || aY === null || bY === null || cY === null) return null;
+  const t = bX === aX ? 0 : (cX - aX) / (bX - aX);
+  return { aX, aY, bX, bY, dY: cY - (aY + (bY - aY) * t) };
+}
+
+/** Distance from a pixel to the channel (0 when inside the band) */
+function channelDistance(g: ChannelPx, x: number, y: number): number {
+  const d1 = distToSegment(x, y, g.aX, g.aY, g.bX, g.bY);
+  const d2 = distToSegment(x, y, g.aX, g.aY + g.dY, g.bX, g.bY + g.dY);
+  const left = Math.min(g.aX, g.bX);
+  const right = Math.max(g.aX, g.bX);
+  if (x >= left && x <= right && g.bX !== g.aX) {
+    const t = (x - g.aX) / (g.bX - g.aX);
+    const yUp = g.aY + (g.bY - g.aY) * t;
+    const yLo = yUp + g.dY;
+    if (y >= Math.min(yUp, yLo) && y <= Math.max(yUp, yLo)) return 0;
+  }
+  return Math.min(d1, d2);
+}
+
+/** Price offset of the parallel line given the cursor pixel (vertical offset, like TradingView) */
+function channelOffsetPrice(
+  ts: TimeScaleApi,
+  cs: ISeriesApi<"Candlestick">,
+  candles: Candle[],
+  a: MeasurePoint,
+  b: MeasurePoint,
+  x: number,
+  y: number,
+): number | null {
+  const aX = timeToX(ts, candles, a.time);
+  const bX = timeToX(ts, candles, b.time);
+  const aY = cs.priceToCoordinate(a.price);
+  const bY = cs.priceToCoordinate(b.price);
+  if (aX === null || bX === null || aY === null || bY === null) return null;
+  const t = bX === aX ? 0 : (x - aX) / (bX - aX);
+  const dY = y - (aY + (bY - aY) * t);
+  const p = cs.coordinateToPrice(bY + dY);
+  return p === null ? null : p - b.price;
 }
 
 function durationLabel(aTime: number, bTime: number): string {
@@ -169,6 +284,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const addTrendLine = useChartStore((s) => s.addTrendLine);
   const addFibonacci = useChartStore((s) => s.addFibonacci);
   const addChannel = useChartStore((s) => s.addChannel);
+  const updateChannel = useChartStore((s) => s.updateChannel);
   const addRectangle = useChartStore((s) => s.addRectangle);
   const removePriceLine = useChartStore((s) => s.removePriceLine);
   const removeTrendLine = useChartStore((s) => s.removeTrendLine);
@@ -190,6 +306,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
   addFibonacciRef.current = addFibonacci;
   const addChannelRef = useRef(addChannel);
   addChannelRef.current = addChannel;
+  const updateChannelRef = useRef(updateChannel);
+  updateChannelRef.current = updateChannel;
   const addRectangleRef = useRef(addRectangle);
   addRectangleRef.current = addRectangle;
   const removePriceLineRef = useRef(removePriceLine);
@@ -226,6 +344,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const [channel, setChannel] = useState<ChannelState>(INITIAL_CHANNEL);
   const [trendline, setTrendline] = useState<TrendLineState>(INITIAL_TRENDLINE);
   const [rectangle, setRectangle] = useState<RectangleState>(INITIAL_RECTANGLE);
+  const [selected, setSelected] = useState<SelectedDrawing | null>(null);
   const [visibleCandles, setVisibleCandles] = useState<Candle[]>([]);
   const [chartDims, setChartDims] = useState({ w: 0, h: 0 });
   const [renderTick, setRenderTick] = useState(0);
@@ -239,6 +358,151 @@ export function PriceChart({ symbol, timeframe }: Props) {
   trendlineRef.current = trendline;
   const rectangleRef = useRef(rectangle);
   rectangleRef.current = rectangle;
+
+  function startChannelDrag(id: string, anchor: ChannelAnchor, e: React.PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected({ kind: "channel", id });
+    const chart = chartRef.current;
+    const cs = candleSeriesRef.current;
+    const box = containerRef.current;
+    const cd = channelDrawingsRef.current.find((c) => c.id === id);
+    if (!chart || !cs || !box || !cd) return;
+    const ts = chart.timeScale();
+    const candles = candlesRef.current;
+    const g = channelPx(ts, cs, candles, cd.a, cd.b, cd.c);
+    const offStart = g ? cs.coordinateToPrice(g.bY + g.dY) : null;
+    if (!g || offStart === null) return;
+    const off0 = offStart - cd.b.price;
+    const rect0 = box.getBoundingClientRect();
+    const startX = e.clientX - rect0.left;
+    const startY = e.clientY - rect0.top;
+
+    const move = (ev: PointerEvent) => {
+      const rect = box.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      const price = cs.coordinateToPrice(y);
+      const time = xToTime(ts, candles, x);
+      if (price === null || time === null) return;
+      let a: MeasurePoint = cd.a;
+      let b: MeasurePoint = cd.b;
+      let off = off0;
+      if (anchor === "a") a = { time, price };
+      else if (anchor === "b") b = { time, price };
+      else if (anchor === "a2") off = price - cd.a.price;
+      else if (anchor === "b2") off = price - cd.b.price;
+      else if (anchor === "mb") {
+        const pm = cs.coordinateToPrice((g.aY + g.bY) / 2);
+        if (pm === null) return;
+        off = price - pm;
+      } else {
+        const p0 = cs.coordinateToPrice(startY);
+        const l0 = ts.coordinateToLogical(startX);
+        const l1 = ts.coordinateToLogical(x);
+        if (p0 === null || l0 === null || l1 === null) return;
+        const shift = (pt: MeasurePoint): MeasurePoint => {
+          const l = timeToLogical(candles, pt.time);
+          const t = l === null ? null : logicalToTime(candles, l + (l1 - l0));
+          return t === null ? pt : { time: t, price: pt.price + (price - p0) };
+        };
+        a = shift(cd.a);
+        b = shift(cd.b);
+      }
+      updateChannelRef.current(id, a, b, { time: b.time, price: b.price + off });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  function startShapeDrag(
+    kind: "trendline" | "fibonacci" | "rectangle",
+    id: string,
+    anchor: ShapeAnchor,
+    e: React.PointerEvent,
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected({ kind, id });
+    const chart = chartRef.current;
+    const cs = candleSeriesRef.current;
+    const box = containerRef.current;
+    const st = useChartStore.getState();
+    const list =
+      kind === "trendline" ? st.trendLines : kind === "fibonacci" ? st.fibonacciDrawings : st.rectangles;
+    const d = list.find((x) => x.id === id);
+    if (!chart || !cs || !box || !d) return;
+    const ts = chart.timeScale();
+    const candles = candlesRef.current;
+    const rect0 = box.getBoundingClientRect();
+    const startX = e.clientX - rect0.left;
+    const startY = e.clientY - rect0.top;
+
+    const move = (ev: PointerEvent) => {
+      const rect = box.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      const price = cs.coordinateToPrice(y);
+      const time = xToTime(ts, candles, x);
+      if (price === null || time === null) return;
+      let a: MeasurePoint = d.a;
+      let b: MeasurePoint = d.b;
+      if (anchor === "a") a = { time, price };
+      else if (anchor === "b") b = { time, price };
+      else if (anchor === "a2") {
+        a = { time, price: d.a.price };
+        b = { time: d.b.time, price };
+      } else if (anchor === "b2") {
+        b = { time, price: d.b.price };
+        a = { time: d.a.time, price };
+      } else {
+        const p0 = cs.coordinateToPrice(startY);
+        const l0 = ts.coordinateToLogical(startX);
+        const l1 = ts.coordinateToLogical(x);
+        if (p0 === null || l0 === null || l1 === null) return;
+        const shift = (pt: MeasurePoint): MeasurePoint => {
+          const l = timeToLogical(candles, pt.time);
+          const t = l === null ? null : logicalToTime(candles, l + (l1 - l0));
+          return t === null ? pt : { time: t, price: pt.price + (price - p0) };
+        };
+        a = shift(d.a);
+        b = shift(d.b);
+      }
+      const store = useChartStore.getState();
+      if (kind === "trendline") store.updateTrendLine(id, a, b);
+      else if (kind === "fibonacci") store.updateFibonacci(id, a, b);
+      else store.updateRectangle(id, a, b);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  function startHLineDrag(id: string, e: React.PointerEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected({ kind: "hline", id });
+    const cs = candleSeriesRef.current;
+    const box = containerRef.current;
+    if (!cs || !box) return;
+    const move = (ev: PointerEvent) => {
+      const price = cs.coordinateToPrice(ev.clientY - box.getBoundingClientRect().top);
+      if (price !== null && isFinite(price)) useChartStore.getState().updatePriceLine(id, price);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
 
   // Helper — compute pane top offsets from chart layout
   function recomputePaneOffsets() {
@@ -322,148 +586,134 @@ export function PriceChart({ symbol, timeframe }: Props) {
     });
 
     chartRef.current = chart;
+    const timeAt = (x: number) => xToTime(chart.timeScale(), candlesRef.current, x);
 
-    // Click handler — add horizontal price line when hline tool is active
+    // Closest drawing (of the current symbol) to a pixel, within a small tolerance
+    const findDrawingAt = (clickX: number, clickY: number): SelectedDrawing | null => {
+      const cs = candleSeriesRef.current;
+      if (!cs) return null;
+      const ts = chart.timeScale();
+      const candles = candlesRef.current;
+      const sym = symbolRef.current;
+      const TOL = 8;
+      let best = TOL;
+      let hit: SelectedDrawing | null = null;
+      const consider = (d: number, kind: DrawingKind, id: string) => {
+        if (d < best) {
+          best = d;
+          hit = { kind, id };
+        }
+      };
+
+      for (const pl of priceLinesRef.current) {
+        if (pl.symbol !== sym) continue;
+        const y = cs.priceToCoordinate(pl.price);
+        if (y !== null) consider(Math.abs(clickY - y), "hline", pl.id);
+      }
+
+      for (const tl of trendLinesRef.current) {
+        if (tl.symbol !== sym) continue;
+        const ax = timeToX(ts, candles, tl.a.time);
+        const ay = cs.priceToCoordinate(tl.a.price);
+        const bx = timeToX(ts, candles, tl.b.time);
+        const by = cs.priceToCoordinate(tl.b.price);
+        if (ax === null || ay === null || bx === null || by === null) continue;
+        consider(distToSegment(clickX, clickY, ax, ay, bx, by), "trendline", tl.id);
+      }
+
+      for (const fd of fibonacciDrawingsRef.current) {
+        if (fd.symbol !== sym) continue;
+        const ax = timeToX(ts, candles, fd.a.time);
+        const ay = cs.priceToCoordinate(fd.a.price);
+        const bx = timeToX(ts, candles, fd.b.time);
+        const by = cs.priceToCoordinate(fd.b.price);
+        if (ax === null || ay === null || bx === null || by === null) continue;
+        const x0 = Math.min(ax, bx);
+        const x1 = Math.max(ax, bx);
+        consider(distToSegment(clickX, clickY, ax, ay, bx, by), "fibonacci", fd.id);
+        const ys = FIBO_LEVELS.map((level) => by + (ay - by) * level);
+        // level lines and their labels (drawn to the left of the first anchor)
+        if (clickX >= x0 - 110 && clickX <= x1 + TOL) {
+          for (const y of ys) consider(Math.abs(clickY - y), "fibonacci", fd.id);
+        }
+        // anywhere inside the bands (low priority so other drawings on top win)
+        if (clickX >= x0 && clickX <= x1 && clickY >= Math.min(...ys) && clickY <= Math.max(...ys)) {
+          consider(6, "fibonacci", fd.id);
+        }
+      }
+
+      for (const cd of channelDrawingsRef.current) {
+        if (cd.symbol !== sym) continue;
+        const g = channelPx(ts, cs, candles, cd.a, cd.b, cd.c);
+        if (g) consider(channelDistance(g, clickX, clickY), "channel", cd.id);
+      }
+
+      for (const rd of rectanglesRef.current) {
+        if (rd.symbol !== sym) continue;
+        const ax = timeToX(ts, candles, rd.a.time);
+        const ay = cs.priceToCoordinate(rd.a.price);
+        const bx = timeToX(ts, candles, rd.b.time);
+        const by = cs.priceToCoordinate(rd.b.price);
+        if (ax === null || ay === null || bx === null || by === null) continue;
+        const inside =
+          clickX >= Math.min(ax, bx) - TOL &&
+          clickX <= Math.max(ax, bx) + TOL &&
+          clickY >= Math.min(ay, by) - TOL &&
+          clickY <= Math.max(ay, by) + TOL;
+        if (inside) consider(0, "rectangle", rd.id);
+      }
+
+      return hit;
+    };
+
+    // Click handler — drawing tools, selection (cursor) and eraser
     chart.subscribeClick((param) => {
       if (!param.point || !candleSeriesRef.current) return;
       const price = candleSeriesRef.current.coordinateToPrice(param.point.y);
       if (price === null || !isFinite(price)) return;
 
       if (toolRef.current === "hline") {
-        addPriceLineRef.current(price, symbolRef.current);
+        const id = addPriceLineRef.current(price, symbolRef.current);
+        setSelected({ kind: "hline", id });
+        useChartStore.getState().setTool("cursor");
+        return;
+      }
+
+      if (toolRef.current === "cursor") {
+        setSelected(findDrawingAt(param.point.x, param.point.y));
         return;
       }
 
       if (toolRef.current === "eraser") {
-        if (!chartRef.current) return;
-        const ts = chartRef.current.timeScale();
-        const cs = candleSeriesRef.current;
-        const clickX = param.point.x;
-        const clickY = param.point.y;
-        const TOL = 8;
-        const sym = symbolRef.current;
-
-        let bestDist = TOL;
-        let bestAction: (() => void) | null = null;
-
-        for (const pl of priceLinesRef.current) {
-          if (pl.symbol !== sym) continue;
-          const y = cs.priceToCoordinate(pl.price);
-          if (y === null) continue;
-          const d = Math.abs(clickY - y);
-          if (d < bestDist) {
-            bestDist = d;
-            bestAction = () => removePriceLineRef.current(pl.id);
-          }
+        const hit = findDrawingAt(param.point.x, param.point.y);
+        if (hit) {
+          if (hit.kind === "hline") removePriceLineRef.current(hit.id);
+          else if (hit.kind === "trendline") removeTrendLineRef.current(hit.id);
+          else if (hit.kind === "fibonacci") removeFibonacciRef.current(hit.id);
+          else if (hit.kind === "channel") removeChannelRef.current(hit.id);
+          else removeRectangleRef.current(hit.id);
+          setSelected(null);
         }
-
-        for (const tl of trendLinesRef.current) {
-          if (tl.symbol !== sym) continue;
-          const ax = ts.timeToCoordinate(tl.a.time as UTCTimestamp);
-          const ay = cs.priceToCoordinate(tl.a.price);
-          const bx = ts.timeToCoordinate(tl.b.time as UTCTimestamp);
-          const by = cs.priceToCoordinate(tl.b.price);
-          if (ax === null || ay === null || bx === null || by === null) continue;
-          const d = distToSegment(clickX, clickY, ax, ay, bx, by);
-          if (d < bestDist) {
-            bestDist = d;
-            bestAction = () => removeTrendLineRef.current(tl.id);
-          }
-        }
-
-        for (const fd of fibonacciDrawingsRef.current) {
-          if (fd.symbol !== sym) continue;
-          const ax = ts.timeToCoordinate(fd.a.time as UTCTimestamp);
-          const ay = cs.priceToCoordinate(fd.a.price);
-          const bx = ts.timeToCoordinate(fd.b.time as UTCTimestamp);
-          const by = cs.priceToCoordinate(fd.b.price);
-          if (ax === null || ay === null || bx === null || by === null) continue;
-          const left = Math.min(ax, bx);
-          if (clickX < left - TOL) continue;
-          for (const level of [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]) {
-            const y = ay + (by - ay) * level;
-            const d = Math.abs(clickY - y);
-            if (d < bestDist) {
-              bestDist = d;
-              bestAction = () => removeFibonacciRef.current(fd.id);
-            }
-          }
-        }
-
-        for (const cd of channelDrawingsRef.current) {
-          if (cd.symbol !== sym) continue;
-          const ax = ts.timeToCoordinate(cd.a.time as UTCTimestamp);
-          const ay = cs.priceToCoordinate(cd.a.price);
-          const bx = ts.timeToCoordinate(cd.b.time as UTCTimestamp);
-          const by = cs.priceToCoordinate(cd.b.price);
-          const cx = ts.timeToCoordinate(cd.c.time as UTCTimestamp);
-          const cy = cs.priceToCoordinate(cd.c.price);
-          if (ax === null || ay === null || bx === null || by === null || cx === null || cy === null)
-            continue;
-          const abX = bx - ax;
-          const abY = by - ay;
-          const abLen = Math.sqrt(abX * abX + abY * abY);
-          let dX = 0;
-          let dY = 0;
-          if (abLen > 0) {
-            const nX = -abY / abLen;
-            const nY = abX / abLen;
-            const acX = cx - ax;
-            const acY = cy - ay;
-            const dist = acX * nX + acY * nY;
-            dX = nX * dist;
-            dY = nY * dist;
-          }
-          const extendFactor = 0.3;
-          const eaX = ax - abX * extendFactor;
-          const eaY = ay - abY * extendFactor;
-          const ebX = bx + abX * extendFactor;
-          const ebY = by + abY * extendFactor;
-          const d1 = distToSegment(clickX, clickY, eaX, eaY, ebX, ebY);
-          const d2 = distToSegment(clickX, clickY, eaX + dX, eaY + dY, ebX + dX, ebY + dY);
-          const d = Math.min(d1, d2);
-          if (d < bestDist) {
-            bestDist = d;
-            bestAction = () => removeChannelRef.current(cd.id);
-          }
-        }
-
-        for (const rd of rectanglesRef.current) {
-          if (rd.symbol !== sym) continue;
-          const ax = ts.timeToCoordinate(rd.a.time as UTCTimestamp);
-          const ay = cs.priceToCoordinate(rd.a.price);
-          const bx = ts.timeToCoordinate(rd.b.time as UTCTimestamp);
-          const by = cs.priceToCoordinate(rd.b.price);
-          if (ax === null || ay === null || bx === null || by === null) continue;
-          const left = Math.min(ax, bx);
-          const right = Math.max(ax, bx);
-          const top = Math.min(ay, by);
-          const bottom = Math.max(ay, by);
-          if (clickX >= left - TOL && clickX <= right + TOL && clickY >= top - TOL && clickY <= bottom + TOL) {
-            bestDist = 0;
-            bestAction = () => removeRectangleRef.current(rd.id);
-          }
-        }
-
-        if (bestAction) bestAction();
         return;
       }
 
       if (toolRef.current === "rectangle") {
-        if (!param.time) return;
-        const time = Number(param.time);
+        const time = timeAt(param.point.x);
+        if (time === null) return;
         const current = rectangleRef.current;
         if (current.phase === "idle") {
           setRectangle({ phase: "placing", a: { time, price }, b: { time, price } });
         } else if (current.phase === "placing" && current.a) {
-          addRectangleRef.current(current.a, { time, price }, symbolRef.current);
+          const id = addRectangleRef.current(current.a, { time, price }, symbolRef.current);
+          setSelected({ kind: "rectangle", id });
+          useChartStore.getState().setTool("cursor");
           setRectangle(INITIAL_RECTANGLE);
         }
       }
 
       if (toolRef.current === "measure") {
-        if (!param.time) return;
-        const time = Number(param.time);
+        const time = timeAt(param.point.x);
+        if (time === null) return;
         const current = measureRef.current;
         if (current.phase === "idle") {
           setMeasure({
@@ -487,39 +737,61 @@ export function PriceChart({ symbol, timeframe }: Props) {
       }
 
       if (toolRef.current === "trendline") {
-        if (!param.time) return;
-        const time = Number(param.time);
+        const time = timeAt(param.point.x);
+        if (time === null) return;
         const current = trendlineRef.current;
         if (current.phase === "idle") {
           setTrendline({ phase: "placing", a: { time, price }, b: { time, price } });
         } else if (current.phase === "placing" && current.a) {
-          addTrendLineRef.current(current.a, { time, price }, symbolRef.current);
+          const id = addTrendLineRef.current(current.a, { time, price }, symbolRef.current);
+          setSelected({ kind: "trendline", id });
+          useChartStore.getState().setTool("cursor");
           setTrendline(INITIAL_TRENDLINE);
         }
       }
 
       if (toolRef.current === "fibonacci") {
-        if (!param.time) return;
-        const time = Number(param.time);
+        const time = timeAt(param.point.x);
+        if (time === null) return;
         const current = fiboRef.current;
         if (current.phase === "idle") {
           setFibo({ phase: "placing", a: { time, price }, b: { time, price } });
         } else if (current.phase === "placing" && current.a) {
-          addFibonacciRef.current(current.a, { time, price }, symbolRef.current);
+          const id = addFibonacciRef.current(current.a, { time, price }, symbolRef.current);
+          setSelected({ kind: "fibonacci", id });
+          useChartStore.getState().setTool("cursor");
           setFibo(INITIAL_FIBO);
         }
       }
 
       if (toolRef.current === "channel") {
-        if (!param.time) return;
-        const time = Number(param.time);
+        const time = timeAt(param.point.x);
+        if (time === null) return;
         const current = channelRef.current;
         if (current.phase === "idle") {
           setChannel({ phase: "p1", a: { time, price }, b: { time, price }, c: null });
         } else if (current.phase === "p1") {
           setChannel({ phase: "p2", a: current.a, b: { time, price }, c: { time, price } });
         } else if (current.phase === "p2" && current.a && current.b) {
-          addChannelRef.current(current.a, current.b, { time, price }, symbolRef.current);
+          const off = channelOffsetPrice(
+            chart.timeScale(),
+            candleSeriesRef.current,
+            candlesRef.current,
+            current.a,
+            current.b,
+            param.point.x,
+            param.point.y,
+          );
+          if (off !== null) {
+            const id = addChannelRef.current(
+              current.a,
+              current.b,
+              { time: current.b.time, price: current.b.price + off },
+              symbolRef.current,
+            );
+            setSelected({ kind: "channel", id });
+            useChartStore.getState().setTool("cursor");
+          }
           setChannel(INITIAL_CHANNEL);
         }
       }
@@ -531,12 +803,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
         toolRef.current === "measure" &&
         measureRef.current.phase === "placing" &&
         param.point &&
-        param.time &&
         candleSeriesRef.current
       ) {
         const price = candleSeriesRef.current.coordinateToPrice(param.point.y);
         if (price !== null && isFinite(price)) {
-          const time = Number(param.time);
+          const time = timeAt(param.point.x);
+          if (time === null) return;
           setMeasure((prev) =>
             prev.phase === "placing" ? { ...prev, b: { time, price } } : prev,
           );
@@ -547,12 +819,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
         toolRef.current === "trendline" &&
         trendlineRef.current.phase === "placing" &&
         param.point &&
-        param.time &&
         candleSeriesRef.current
       ) {
         const priceT = candleSeriesRef.current.coordinateToPrice(param.point.y);
         if (priceT !== null && isFinite(priceT)) {
-          const timeT = Number(param.time);
+          const timeT = timeAt(param.point.x);
+          if (timeT === null) return;
           setTrendline((prev) =>
             prev.phase === "placing" ? { ...prev, b: { time: timeT, price: priceT } } : prev,
           );
@@ -563,12 +835,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
         toolRef.current === "rectangle" &&
         rectangleRef.current.phase === "placing" &&
         param.point &&
-        param.time &&
         candleSeriesRef.current
       ) {
         const priceR = candleSeriesRef.current.coordinateToPrice(param.point.y);
         if (priceR !== null && isFinite(priceR)) {
-          const timeR = Number(param.time);
+          const timeR = timeAt(param.point.x);
+          if (timeR === null) return;
           setRectangle((prev) =>
             prev.phase === "placing" ? { ...prev, b: { time: timeR, price: priceR } } : prev,
           );
@@ -579,12 +851,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
         toolRef.current === "fibonacci" &&
         fiboRef.current.phase === "placing" &&
         param.point &&
-        param.time &&
         candleSeriesRef.current
       ) {
         const priceF = candleSeriesRef.current.coordinateToPrice(param.point.y);
         if (priceF !== null && isFinite(priceF)) {
-          const timeF = Number(param.time);
+          const timeF = timeAt(param.point.x);
+          if (timeF === null) return;
           setFibo((prev) =>
             prev.phase === "placing" ? { ...prev, b: { time: timeF, price: priceF } } : prev,
           );
@@ -594,12 +866,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
       if (
         toolRef.current === "channel" &&
         param.point &&
-        param.time &&
         candleSeriesRef.current
       ) {
         const priceC = candleSeriesRef.current.coordinateToPrice(param.point.y);
         if (priceC !== null && isFinite(priceC)) {
-          const timeC = Number(param.time);
+          const timeC = timeAt(param.point.x);
+          if (timeC === null) return;
           const cur = channelRef.current;
           if (cur.phase === "p1") {
             setChannel((prev) =>
@@ -865,7 +1137,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
       }
     }
     for (const pl of linesForThisSymbol) {
-      if (!map.has(pl.id)) {
+      const existing = map.get(pl.id);
+      if (existing) {
+        existing.applyOptions({ price: pl.price });
+      } else {
         const apiLine = series.createPriceLine({
           price: pl.price,
           color: TV_COLORS.blue,
@@ -1169,8 +1444,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
     candleSeriesRef.current
   ) {
     const ts = chartRef.current.timeScale();
-    const aX = ts.timeToCoordinate(measure.a.time as UTCTimestamp);
-    const bX = ts.timeToCoordinate(measure.b.time as UTCTimestamp);
+    const aX = timeToX(ts, candlesRef.current, measure.a.time);
+    const bX = timeToX(ts, candlesRef.current, measure.b.time);
     const aY = candleSeriesRef.current.priceToCoordinate(measure.a.price);
     const bY = candleSeriesRef.current.priceToCoordinate(measure.b.price);
 
@@ -1210,12 +1485,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const fiboRenders: React.ReactNode[] = [];
   const channelRenders: React.ReactNode[] = [];
   const rectangleRenders: React.ReactNode[] = [];
+  let hlineHandle: React.ReactNode = null;
 
   if (chartRef.current && candleSeriesRef.current) {
     const ts = chartRef.current.timeScale();
     const cs = candleSeriesRef.current;
     const toXY = (p: MeasurePoint) => {
-      const x = ts.timeToCoordinate(p.time as UTCTimestamp);
+      const x = timeToX(ts, candlesRef.current, p.time);
       const y = cs.priceToCoordinate(p.price);
       return x !== null && y !== null ? { x, y } : null;
     };
@@ -1227,7 +1503,16 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const pb = toXY(tl.b);
       if (pa && pb) {
         trendLineRenders.push(
-          <TrendLineOverlay key={tl.id} aX={pa.x} aY={pa.y} bX={pb.x} bY={pb.y} isPreview={false} />,
+          <TrendLineOverlay
+            key={tl.id}
+            aX={pa.x}
+            aY={pa.y}
+            bX={pb.x}
+            bY={pb.y}
+            isPreview={false}
+            selected={selected?.kind === "trendline" && selected.id === tl.id}
+            onAnchorPointerDown={(anchor, e) => startShapeDrag("trendline", tl.id, anchor, e)}
+          />,
         );
       }
     }
@@ -1236,7 +1521,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const pb = toXY(trendline.b);
       if (pa && pb) {
         trendLineRenders.push(
-          <TrendLineOverlay key="trendline-preview" aX={pa.x} aY={pa.y} bX={pb.x} bY={pb.y} isPreview />,
+          <TrendLineOverlay key="trendline-preview" aX={pa.x} aY={pa.y} bX={pb.x} bY={pb.y} isPreview selected={false} />,
         );
       }
     }
@@ -1254,10 +1539,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
             aY={pa.y}
             bX={pb.x}
             bY={pb.y}
-            highPrice={Math.max(fd.a.price, fd.b.price)}
-            lowPrice={Math.min(fd.a.price, fd.b.price)}
-            chartWidth={chartDims.w}
+            aPrice={fd.a.price}
+            bPrice={fd.b.price}
             isPreview={false}
+            selected={selected?.kind === "fibonacci" && selected.id === fd.id}
+            onAnchorPointerDown={(anchor, e) => startShapeDrag("fibonacci", fd.id, anchor, e)}
           />,
         );
       }
@@ -1273,10 +1559,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
             aY={pa.y}
             bX={pb.x}
             bY={pb.y}
-            highPrice={Math.max(fibo.a.price, fibo.b.price)}
-            lowPrice={Math.min(fibo.a.price, fibo.b.price)}
-            chartWidth={chartDims.w}
+            aPrice={fibo.a.price}
+            bPrice={fibo.b.price}
             isPreview
+            selected={false}
           />,
         );
       }
@@ -1285,20 +1571,19 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // Parallel channels
     for (const cd of channelDrawings) {
       if (cd.symbol !== symbol) continue;
-      const pa = toXY(cd.a);
-      const pb = toXY(cd.b);
-      const pc = toXY(cd.c);
-      if (pa && pb && pc) {
+      const g = channelPx(ts, cs, candlesRef.current, cd.a, cd.b, cd.c);
+      if (g) {
         channelRenders.push(
           <ChannelOverlay
             key={cd.id}
-            aX={pa.x}
-            aY={pa.y}
-            bX={pb.x}
-            bY={pb.y}
-            cX={pc.x}
-            cY={pc.y}
+            aX={g.aX}
+            aY={g.aY}
+            bX={g.bX}
+            bY={g.bY}
+            dY={g.dY}
             isPreview={false}
+            selected={selected?.kind === "channel" && selected.id === cd.id}
+            onAnchorPointerDown={(anchor, e) => startChannelDrag(cd.id, anchor, e)}
           />,
         );
       }
@@ -1306,7 +1591,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (channel.phase !== "idle" && channel.a && channel.b) {
       const pa = toXY(channel.a);
       const pb = toXY(channel.b);
-      const pc = channel.c ? toXY(channel.c) : null;
+      const g = channel.c ? channelPx(ts, cs, candlesRef.current, channel.a, channel.b, channel.c) : null;
       if (pa && pb) {
         channelRenders.push(
           <ChannelOverlay
@@ -1315,10 +1600,27 @@ export function PriceChart({ symbol, timeframe }: Props) {
             aY={pa.y}
             bX={pb.x}
             bY={pb.y}
-            cX={pc?.x ?? null}
-            cY={pc?.y ?? null}
+            dY={g ? g.dY : null}
             isPreview
+            selected={false}
           />,
+        );
+      }
+    }
+
+    // Handle for the selected horizontal line
+    if (selected?.kind === "hline") {
+      const pl = priceLines.find((p) => p.id === selected.id && p.symbol === symbol);
+      const y = pl ? cs.priceToCoordinate(pl.price) : null;
+      if (pl && y !== null) {
+        hlineHandle = (
+          <svg className="pointer-events-none absolute inset-0 z-20" style={{ overflow: "visible" }}>
+            <ShapeAnchors
+              color="#2962ff"
+              points={[{ key: "mt", x: (chartDims.w || 400) / 2, y }]}
+              onPointerDown={(_, e) => startHLineDrag(pl.id, e)}
+            />
+          </svg>
         );
       }
     }
@@ -1330,7 +1632,16 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const pb = toXY(rd.b);
       if (pa && pb) {
         rectangleRenders.push(
-          <RectangleOverlay key={rd.id} aX={pa.x} aY={pa.y} bX={pb.x} bY={pb.y} isPreview={false} />,
+          <RectangleOverlay
+            key={rd.id}
+            aX={pa.x}
+            aY={pa.y}
+            bX={pb.x}
+            bY={pb.y}
+            isPreview={false}
+            selected={selected?.kind === "rectangle" && selected.id === rd.id}
+            onAnchorPointerDown={(anchor, e) => startShapeDrag("rectangle", rd.id, anchor, e)}
+          />,
         );
       }
     }
@@ -1339,7 +1650,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       const pb = toXY(rectangle.b);
       if (pa && pb) {
         rectangleRenders.push(
-          <RectangleOverlay key="rectangle-preview" aX={pa.x} aY={pa.y} bX={pb.x} bY={pb.y} isPreview />,
+          <RectangleOverlay key="rectangle-preview" aX={pa.x} aY={pa.y} bX={pb.x} bY={pb.y} isPreview selected={false} />,
         );
       }
     }
@@ -1351,10 +1662,19 @@ export function PriceChart({ symbol, timeframe }: Props) {
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       {measureRender}
-      {fiboRenders}
-      {channelRenders}
-      {trendLineRenders}
-      {rectangleRenders}
+      <div
+        className="pointer-events-none absolute left-0 top-0 overflow-hidden"
+        style={{
+          height: paneOffsets[0]?.height ?? "100%",
+          width: Math.max(0, chartDims.w - (chartRef.current?.priceScale("right").width() ?? 0)) || "100%",
+        }}
+      >
+        {fiboRenders}
+        {channelRenders}
+        {trendLineRenders}
+        {rectangleRenders}
+        {hlineHandle}
+      </div>
 
       {/* Volume Profile Visible Range */}
       {indicators.vpfr && !hidden.vpfr && visibleCandles.length > 0 && candleSeriesRef.current && (

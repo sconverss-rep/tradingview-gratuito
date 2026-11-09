@@ -1,57 +1,66 @@
 "use client";
 
 import { formatPrice } from "@/lib/format";
+import { ShapeAnchors, type ShapeAnchor } from "./ShapeAnchors";
 
-const FIBO_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+// TradingView-style retracement: 0 sits on the 2nd click, 1 on the 1st click,
+// extension levels continue past 1.
+export const FIBO_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236];
 const FIBO_COLORS: Record<number, string> = {
   0: "#787b86",
-  0.236: "#f44336",
+  0.236: "#f23645",
   0.382: "#ff9800",
   0.5: "#4caf50",
-  0.618: "#00bcd4",
-  0.786: "#2196f3",
-  1: "#9c27b0",
+  0.618: "#089981",
+  0.786: "#00bcd4",
+  1: "#787b86",
+  1.618: "#2962ff",
+  2.618: "#f23645",
+  3.618: "#9c27b0",
+  4.236: "#e91e63",
 };
 
 interface FibonacciOverlayProps {
+  /** First click (level 1) */
   aX: number;
   aY: number;
+  aPrice: number;
+  /** Second click (level 0) */
   bX: number;
   bY: number;
-  highPrice: number;
-  lowPrice: number;
-  chartWidth: number;
+  bPrice: number;
   isPreview: boolean;
+  selected: boolean;
+  onAnchorPointerDown?: (anchor: ShapeAnchor, e: React.PointerEvent) => void;
 }
 
 export function FibonacciOverlay({
   aX,
   aY,
+  aPrice,
   bX,
   bY,
-  highPrice,
-  lowPrice,
-  chartWidth,
+  bPrice,
   isPreview,
+  selected,
+  onAnchorPointerDown,
 }: FibonacciOverlayProps) {
   const left = Math.min(aX, bX);
-  const right = Math.max(chartWidth, aX, bX);
-  const priceRange = highPrice - lowPrice;
-  const opacity = isPreview ? 0.55 : 0.9;
-
-  const levelY = (level: number) => aY + (bY - aY) * level;
+  const right = Math.max(aX, bX);
+  const levelY = (level: number) => bY + (aY - bY) * level;
+  const levelPrice = (level: number) => bPrice + (aPrice - bPrice) * level;
+  const fade = isPreview ? 0.6 : 1;
 
   return (
     <svg
       className="pointer-events-none absolute inset-0 z-20"
       style={{ overflow: "visible" }}
     >
-      {/* Colored bands between consecutive levels (rainbow theme) */}
+      {/* Bands between consecutive levels, tinted with the farther level's color */}
       {FIBO_LEVELS.slice(0, -1).map((level, i) => {
-        const nextLevel = FIBO_LEVELS[i + 1];
+        const next = FIBO_LEVELS[i + 1];
         const y0 = levelY(level);
-        const y1 = levelY(nextLevel);
-        const color = FIBO_COLORS[nextLevel] ?? "#787b86";
+        const y1 = levelY(next);
         return (
           <rect
             key={`band-${level}`}
@@ -59,58 +68,57 @@ export function FibonacciOverlay({
             y={Math.min(y0, y1)}
             width={right - left}
             height={Math.abs(y1 - y0)}
-            fill={color}
-            opacity={isPreview ? 0.06 : 0.1}
+            fill={FIBO_COLORS[next]}
+            opacity={0.2 * fade}
           />
         );
       })}
 
-      {/* Fibonacci levels */}
       {FIBO_LEVELS.map((level) => {
         const y = levelY(level);
-        const price = highPrice - priceRange * level;
-        const color = FIBO_COLORS[level] ?? "#787b86";
-        const pct = (level * 100).toFixed(1);
-
+        const color = FIBO_COLORS[level];
         return (
-          <g key={level}>
-            <line
-              x1={left}
-              y1={y}
-              x2={right}
-              y2={y}
-              stroke={color}
-              strokeWidth={level === 0 || level === 1 ? 1.5 : 1}
-              opacity={opacity}
-            />
+          <g key={level} opacity={fade}>
+            <line x1={left} y1={y} x2={right} y2={y} stroke={color} strokeWidth={1.5} />
             <text
-              x={right - 8}
-              y={y - 4}
+              x={left - 8}
+              y={y}
               fill={color}
-              fontSize={11}
+              fontSize={12}
               fontFamily="ui-sans-serif, system-ui, sans-serif"
               textAnchor="end"
-              opacity={opacity}
+              dominantBaseline="central"
             >
-              {pct}% — {formatPrice(price)}
+              {level} ({formatPrice(levelPrice(level))})
             </text>
           </g>
         );
       })}
 
-      {/* Connecting line + anchor markers between the two points */}
+      {/* Trend line between the two anchors */}
       <line
         x1={aX}
         y1={aY}
         x2={bX}
         y2={bY}
-        stroke="#2962ff"
-        strokeWidth={1}
-        strokeDasharray="4 2"
-        opacity={isPreview ? 0.5 : 0.7}
+        stroke="#787b86"
+        strokeWidth={1.5}
+        strokeDasharray="7 6"
+        opacity={fade}
       />
-      <circle cx={aX} cy={aY} r={4} fill="#131722" stroke="#2962ff" strokeWidth={1.5} opacity={opacity} />
-      <circle cx={bX} cy={bY} r={4} fill="#131722" stroke="#2962ff" strokeWidth={1.5} opacity={opacity} />
+
+      {(selected || isPreview) && (
+        <ShapeAnchors
+          color="#2962ff"
+          opacity={fade}
+          onPointerDown={isPreview ? undefined : onAnchorPointerDown}
+          points={[
+            { key: "a", x: aX, y: aY },
+            { key: "b", x: bX, y: bY },
+            ...(isPreview ? [] : [{ key: "mt" as const, x: (aX + bX) / 2, y: (aY + bY) / 2 }]),
+          ]}
+        />
+      )}
     </svg>
   );
 }

@@ -153,11 +153,16 @@ interface ChartState {
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   setTool: (t: DrawingTool) => void;
-  addPriceLine: (price: number, symbol: string) => void;
-  addTrendLine: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
-  addFibonacci: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
-  addChannel: (a: DrawingPoint, b: DrawingPoint, c: DrawingPoint, symbol: string) => void;
-  addRectangle: (a: DrawingPoint, b: DrawingPoint, symbol: string) => void;
+  addPriceLine: (price: number, symbol: string) => string;
+  updatePriceLine: (id: string, price: number) => void;
+  addTrendLine: (a: DrawingPoint, b: DrawingPoint, symbol: string) => string;
+  updateTrendLine: (id: string, a: DrawingPoint, b: DrawingPoint) => void;
+  addFibonacci: (a: DrawingPoint, b: DrawingPoint, symbol: string) => string;
+  updateFibonacci: (id: string, a: DrawingPoint, b: DrawingPoint) => void;
+  addChannel: (a: DrawingPoint, b: DrawingPoint, c: DrawingPoint, symbol: string) => string;
+  updateChannel: (id: string, a: DrawingPoint, b: DrawingPoint, c: DrawingPoint) => void;
+  addRectangle: (a: DrawingPoint, b: DrawingPoint, symbol: string) => string;
+  updateRectangle: (id: string, a: DrawingPoint, b: DrawingPoint) => void;
   removePriceLine: (id: string) => void;
   removeTrendLine: (id: string) => void;
   removeFibonacci: (id: string) => void;
@@ -256,31 +261,58 @@ export const useChartStore = create<ChartState>()(
           };
         }),
       setTool: (tool) => set({ tool }),
-      addPriceLine: (price, symbol) =>
+      addPriceLine: (price, symbol) => {
+        const id = genId();
+        set((state) => ({ priceLines: [...state.priceLines, { id, symbol, price }] }));
+        return id;
+      },
+      updatePriceLine: (id, price) =>
         set((state) => ({
-          priceLines: [...state.priceLines, { id: genId(), symbol, price }],
+          priceLines: state.priceLines.map((d) => (d.id === id ? { ...d, price } : d)),
         })),
-      addTrendLine: (a, b, symbol) =>
+      addTrendLine: (a, b, symbol) => {
+        const id = genId();
+        set((state) => ({ trendLines: [...state.trendLines, { id, symbol, a, b }] }));
+        return id;
+      },
+      updateTrendLine: (id, a, b) =>
         set((state) => ({
-          trendLines: [...state.trendLines, { id: genId(), symbol, a, b }],
+          trendLines: state.trendLines.map((d) => (d.id === id ? { ...d, a, b } : d)),
         })),
-      addFibonacci: (a, b, symbol) =>
+      addFibonacci: (a, b, symbol) => {
+        const id = genId();
         set((state) => ({
-          fibonacciDrawings: [
-            ...state.fibonacciDrawings,
-            { id: genId(), symbol, a, b },
-          ],
+          fibonacciDrawings: [...state.fibonacciDrawings, { id, symbol, a, b }],
+        }));
+        return id;
+      },
+      updateFibonacci: (id, a, b) =>
+        set((state) => ({
+          fibonacciDrawings: state.fibonacciDrawings.map((d) =>
+            d.id === id ? { ...d, a, b } : d,
+          ),
         })),
-      addChannel: (a, b, c, symbol) =>
+      addChannel: (a, b, c, symbol) => {
+        const id = genId();
         set((state) => ({
-          channelDrawings: [
-            ...state.channelDrawings,
-            { id: genId(), symbol, a, b, c },
-          ],
+          channelDrawings: [...state.channelDrawings, { id, symbol, a, b, c }],
+        }));
+        return id;
+      },
+      updateChannel: (id, a, b, c) =>
+        set((state) => ({
+          channelDrawings: state.channelDrawings.map((d) =>
+            d.id === id ? { ...d, a, b, c } : d,
+          ),
         })),
-      addRectangle: (a, b, symbol) =>
+      addRectangle: (a, b, symbol) => {
+        const id = genId();
+        set((state) => ({ rectangles: [...state.rectangles, { id, symbol, a, b }] }));
+        return id;
+      },
+      updateRectangle: (id, a, b) =>
         set((state) => ({
-          rectangles: [...state.rectangles, { id: genId(), symbol, a, b }],
+          rectangles: state.rectangles.map((d) => (d.id === id ? { ...d, a, b } : d)),
         })),
       removePriceLine: (id) =>
         set((state) => ({

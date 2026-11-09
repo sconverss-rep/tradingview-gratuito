@@ -1,17 +1,29 @@
 "use client";
 
+import { ShapeAnchors, type ShapeAnchor } from "./ShapeAnchors";
+
 interface TrendLineOverlayProps {
   aX: number;
   aY: number;
   bX: number;
   bY: number;
   isPreview: boolean;
+  selected: boolean;
+  onAnchorPointerDown?: (anchor: ShapeAnchor, e: React.PointerEvent) => void;
 }
 
 const LINE_COLOR = "#2962ff";
 
-export function TrendLineOverlay({ aX, aY, bX, bY, isPreview }: TrendLineOverlayProps) {
-  const opacity = isPreview ? 0.6 : 1;
+export function TrendLineOverlay({
+  aX,
+  aY,
+  bX,
+  bY,
+  isPreview,
+  selected,
+  onAnchorPointerDown,
+}: TrendLineOverlayProps) {
+  const opacity = isPreview ? 0.7 : 1;
 
   return (
     <svg
@@ -29,8 +41,18 @@ export function TrendLineOverlay({ aX, aY, bX, bY, isPreview }: TrendLineOverlay
         opacity={opacity}
         strokeLinecap="round"
       />
-      <circle cx={aX} cy={aY} r={4} fill="#131722" stroke={LINE_COLOR} strokeWidth={1.5} opacity={opacity} />
-      <circle cx={bX} cy={bY} r={4} fill="#131722" stroke={LINE_COLOR} strokeWidth={1.5} opacity={opacity} />
+      {(selected || isPreview) && (
+        <ShapeAnchors
+          color={LINE_COLOR}
+          opacity={opacity}
+          onPointerDown={isPreview ? undefined : onAnchorPointerDown}
+          points={[
+            { key: "a", x: aX, y: aY },
+            { key: "b", x: bX, y: bY },
+            ...(isPreview ? [] : [{ key: "mt" as const, x: (aX + bX) / 2, y: (aY + bY) / 2 }]),
+          ]}
+        />
+      )}
     </svg>
   );
 }
